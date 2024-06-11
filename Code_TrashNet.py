@@ -103,7 +103,7 @@ result_path = f'E:/5-1/2022-Research/TrashNet/result'
 
 # Data preparation
 transform = transforms.Compose([
-    transforms.Resize((150, 150)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
 
@@ -135,83 +135,64 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 num_classes = len(class_names)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Load pretrained MobileNetV2 model
+model = models.mobilenet_v2(pretrained=True)
 
 
 
+# Define the attention mechanism
+class SelfAttention(nn.Module):
+    def __init__(self, in_dim):
+        super(SelfAttention, self).__init__()
+        self.query_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
+        self.key_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
+        self.value_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
+        self.gamma = nn.Parameter(torch.zeros(1))
 
+    def forward(self, x):
+        batch_size, C, width, height = x.size()
+        proj_query = self.query_conv(x).view(batch_size, -1, width * height).permute(0, 2, 1)
+        proj_key = self.key_conv(x).view(batch_size, -1, width * height)
+        energy = torch.bmm(proj_query, proj_key)
+        attention = torch.softmax(energy, dim=-1)
+        proj_value = self.value_conv(x).view(batch_size, -1, width * height)
 
+        out = torch.bmm(proj_value, attention.permute(0, 2, 1))
+        out = out.view(batch_size, C, width, height)
+        out = self.gamma * out + x
+        return out
 
+# Load pretrained MobileNetV2 model
+model = models.mobilenet_v2(pretrained=True)
 
-###############################################################
-# # Load pretrained MobileNetV2 model
-# model = models.mobilenet_v2(pretrained=True)
+# Freeze feature extractor
+for param in model.parameters():
+    param.requires_grad = False
 
-# # Freeze feature extractor
-# for param in model.parameters():
-#     param.requires_grad = False
+# Modify classifier for 6 classes
+num_features = model.classifier[1].in_features
 
-# # Modify classifier for 6 classes
-# num_features = model.classifier[1].in_features
-# model.classifier = nn.Sequential(
-#     nn.Dropout(0.1),
-#     nn.Linear(num_features, num_classes)
-# )
-# model = model.to(device)
+# Add attention mechanism before the classifier
+class MobileNetV2WithAttention(nn.Module):
+    def __init__(self, num_classes):
+        super(MobileNetV2WithAttention, self).__init__()
+        self.features = model.features
+        self.attention = SelfAttention(in_dim=1280)
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.1),
+            nn.Linear(num_features, num_classes)
+        )
 
-#####################################################################
-import tensorflow as tf
-from tensorflow.keras import layers, models, datasets, utils, backend as K
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+    def forward(self, x):
+        x = self.features(x)
+        x = self.attention(x)
+        x = x.mean([2, 3])  # Global average pooling
+        x = self.classifier(x)
+        return x
 
-# Define the Self-Attention layer
-class SelfAttention(layers.Layer):
-    def __init__(self, **kwargs):
-        super(SelfAttention, self).__init__(**kwargs)
+model = MobileNetV2WithAttention(num_classes=num_classes).to(device)
 
-    def build(self, input_shape):
-        self.Wq = self.add_weight(shape=(input_shape[-1], input_shape[-1]),
-                                  initializer='glorot_uniform',
-                                  trainable=True,
-                                  name='Wq')
-        self.Wk = self.add_weight(shape=(input_shape[-1], input_shape[-1]),
-                                  initializer='glorot_uniform',
-                                  trainable=True,
-                                  name='Wk')
-        self.Wv = self.add_weight(shape=(input_shape[-1], input_shape[-1]),
-                                  initializer='glorot_uniform',
-                                  trainable=True,
-                                  name='Wv')
-        super(SelfAttention, self).build(input_shape)
-
-    def call(self, inputs):
-        Q = K.dot(inputs, self.Wq)
-        K_ = K.dot(inputs, self.Wk)
-        V = K.dot(inputs, self.Wv)
-
-        attention_weights = K.batch_dot(Q, K_, axes=[2, 2])
-        attention_weights = K.softmax(attention_weights)
-
-        context_vector = K.batch_dot(attention_weights, V)
-        return context_vector
-
-# Build the CNN model with attention mechanism
-input_layer = layers.Input(shape=(150, 150, 3))
-x = layers.Conv2D(32, (3, 3), activation='relu')(input_layer)
-x = layers.MaxPooling2D((2, 2))(x)
-x = layers.Conv2D(64, (3, 3), activation='relu')(x)
-x = layers.MaxPooling2D((2, 2))(x)
-x = layers.Conv2D(128, (3, 3), activation='relu')(x)
-x = layers.MaxPooling2D((2, 2))(x)
-x = layers.Conv2D(256, (3, 3), activation='relu')(x)
-x = layers.GlobalAveragePooling2D()(x)
-x = layers.Reshape((1, -1))(x)  # Ensure 3D shape for attention
-x = SelfAttention()(x)
-x = layers.Flatten()(x)
-output_layer = layers.Dense(6, activation='softmax')(x)  # Adjusted for 6 classes
-
-model = models.Model(inputs=input_layer, outputs=output_layer)
-
-
+model = model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 # Arrays to store metrics
@@ -284,7 +265,7 @@ for epoch in range(num_epochs):
     val_accuracies.append(val_accuracy)
     if val_accuracy>max_val_acc :
       # Save the model
-      model_path = os.path.join(model_directory, 'self_attetion_trashnet.pth')
+      model_path = os.path.join(model_directory, 'mobilenet_v2_trashnet.pth')
       torch.save(model.state_dict(), model_path)
       print(f"Model has been saved to {model_path}")
       max_val_acc=val_accuracy
