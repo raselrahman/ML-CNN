@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile of {{ name }}</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            text-align: center;
+            margin-top: 50px;
+        }
+        img {
+            border-radius: 50%;
+            width: 150px;
+            height: 150px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome to My Profile</h1>
+    <img src="{{ url_for('static', filename='images/profile.jpg') }}" alt="Profile Picture">
+    <h2>{{ name }}</h2>
+    <h3>Achievements</h3>
+    <ul>
+        <li>Completed Bachelor's in Computer Science (2022)</li>
+        <li>Pursuing Master's in Computer Science</li>
+        <li>Adjunct Lecturer at North Western University, Khulna</li>
+        <li>Experience in Machine Learning and Data Science</li>
+    </ul>
+</body>
+</html>
